@@ -202,9 +202,27 @@ static firebase_response_t * oauth_sign_in(struct firebase_auth_context * auth, 
 {
 	static const firebase_auth_endpoints_t * endpoints = g_firebase_auth_endpoints;
 	debug_printf("%s() -> endpoint: %s", __FUNCTION__, endpoints->oauth_sign_in);
-	
 
 	return NULL;
+}
+
+static int firebase_set_locale(struct firebase_auth_context * auth, const char * locale)
+{
+	assert(auth);
+	firebase_auth_email_t * auth_email = auth->auth_email;
+	
+	if(auth_email->hdr_post_json) {
+		curl_slist_free_all(auth_email->hdr_post_json);
+		auth_email->hdr_post_json = NULL;
+		
+		auth_email->hdr_post_json = curl_slist_append(auth_email->hdr_post_json, "Content-Type: application/json");
+	}
+	if(locale) {
+		char x_firebase_locale[200] = "";
+		snprintf(x_firebase_locale, sizeof(x_firebase_locale), "X-Firebase-Locale: %s", locale);
+		auth_email->hdr_post_json = curl_slist_append(auth_email->hdr_post_json, x_firebase_locale);
+	}
+	return 0;
 }
 
 firebase_auth_context_t * firebase_auth_context_init(firebase_auth_context_t * auth, void * user_data)
@@ -217,6 +235,7 @@ firebase_auth_context_t * firebase_auth_context_init(firebase_auth_context_t * a
 	auth->load_credentials = load_credentials;
 	auth->get_api_key = get_api_key;
 	auth->oauth_sign_in = oauth_sign_in;
+	auth->set_locale = firebase_set_locale;
 	
 	firebase_auth_private_t * priv = firebase_auth_private_new(auth);
 	assert(priv && auth->priv == priv);
@@ -297,6 +316,24 @@ static firebase_response_t * post_json_request(firebase_auth_email_t * auth_emai
 		ret = curl_easy_getinfo(curl, CURLINFO_CONTENT_TYPE, &content_type);
 		if(ret == CURLE_OK && content_type) {
 			response->content_type = content_type_to_supported_ptr(content_type);
+			if(response->content_type) { // json_format
+				auto_buffer_t * buf = response->buf;
+				if(buf->data && buf->length > 0) {
+					json_tokener * jtok = json_tokener_new();
+					enum json_tokener_error jerr;
+					json_object * jbody = json_tokener_parse_ex(jtok, (char *)buf->data, buf->length);
+					jerr = json_tokener_get_error(jtok);
+					json_tokener_free(jtok);
+					
+					if(jerr == json_tokener_success) {
+						response->jresponse = jbody;
+					}else {
+						response->err_code = jerr;
+						response->err_desc = json_tokener_error_desc(jerr);
+						if(jbody) json_object_put(jbody);
+					}
+				}
+			}
 			if(NULL == response->content_type) response->content_type = content_type;
 		}
 	}
@@ -325,6 +362,7 @@ static firebase_response_t * email_sign_up(struct firebase_auth_email * auth_ema
 	
 	return post_json_request(auth_email, endpoint, jrequest);
 }
+
 static firebase_response_t * email_sign_in(struct firebase_auth_email * auth_email, const char * email, const char * password)
 {
 	const char * endpoint = g_firebase_auth_endpoints->email_sign_in;
@@ -338,11 +376,20 @@ static firebase_response_t * email_sign_in(struct firebase_auth_email * auth_ema
 	json_object_object_add(jrequest, "returnSecureToken", json_object_new_boolean(TRUE));
 	
 	return post_json_request(auth_email, endpoint, jrequest);
-}		  
+}		
+  
 static firebase_response_t * email_send_email_verification(struct firebase_auth_email * auth_email, const char * id_token)
 {
-	assert(auth_email && auth_email->curl);
-	return NULL;
+	const char * endpoint = g_firebase_auth_endpoints->email_send_email_verification;
+	debug_printf("%s() -> endpoint: %s", __FUNCTION__, endpoint);
+	
+	assert(auth_email && id_token);
+	json_object * jrequest = json_object_new_object();
+	assert(jrequest);
+	json_object_object_add(jrequest, "requestType", json_object_new_string("VERIFY_EMAIL")); // The type of confirmation code to send. Should always be "VERIFY_EMAIL".
+	json_object_object_add(jrequest, "idToken", json_object_new_string(id_token));
+	
+	return post_json_request(auth_email, endpoint, jrequest);
 }
 static firebase_response_t * email_confirm_email_verification(struct firebase_auth_email * auth_email, const char * email, const char * password)
 {
@@ -433,6 +480,8 @@ int main(int argc, char **argv)
 	firebase_auth_context_t * auth = firebase_auth_context_init(firebase_auth, NULL);
 	assert(auth);
 	
+	auth->set_locale(auth, "ja-JP");
+	
 	int rc = auth->load_credentials(auth, credentials_file);
 	assert(0 == rc);
 	
@@ -454,6 +503,22 @@ int main(int argc, char **argv)
 	// test email sign_in
 	result = auth_email->sign_in(auth_email, test_email, test_password);
 	firebase_response_dump(result);
+	
+	if(result && result->http_response_code == 200) {
+		// test send email verification
+		json_object * jresponse = result->jresponse;
+		assert(jresponse);
+		
+		const char * id_token = json_get_value(jresponse, string, idToken);
+		assert(id_token);
+		firebase_response_t * verification = auth_email->send_email_verification(auth_email, id_token);
+		
+		if(verification) {
+			firebase_response_dump(verification);
+			firebase_response_free(verification);
+		}
+	}
+	
 	firebase_response_free(result);
 	
 	
