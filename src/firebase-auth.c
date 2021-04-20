@@ -39,10 +39,12 @@
 enum mime_type
 {
 	mime_type_json = 0,
+	mime_type_json_utf8 = 1,
 };
 
 static const char * s_supported_mime_types[] = {
 	[mime_type_json] = "application/json",
+	[mime_type_json_utf8] = "application/json; charset=UTF-8", 
 	NULL,
 };
 
@@ -113,7 +115,7 @@ void firebase_response_dump(const firebase_response_t * response)
 	fprintf(stderr, "content-type: %s\n", response->content_type);
 	fprintf(stderr, "content-length: %ld\n", (long)response->buf->length);
 	
-	if(response->content_type == s_supported_mime_types[mime_type_json] && response->jresponse) {
+	if(response->jresponse) {
 		fprintf(stderr, "json_response: %s\n", json_object_to_json_string_ext(response->jresponse, JSON_C_TO_STRING_PRETTY));
 	}
 	else if(response->buf->length > 0) {
@@ -227,7 +229,10 @@ firebase_auth_context_t * firebase_auth_context_init(firebase_auth_context_t * a
 void firebase_auth_context_cleanup(firebase_auth_context_t * auth)
 {
 	if(NULL == auth) return;
+	
+	firebase_auth_email_cleanup(auth->auth_email);
 	firebase_auth_private_free(auth->priv);
+	
 	return;
 }
 
@@ -247,24 +252,17 @@ static size_t auth_email_on_response(void * ptr, size_t size, size_t n, void * u
 	return cb;
 }
 
-static firebase_response_t * email_sign_up(struct firebase_auth_email * auth_email, const char * email, const char * password)
+static firebase_response_t * post_json_request(firebase_auth_email_t * auth_email, const char * endpoint, json_object * jrequest) 
 {
-	const char * endpoint = g_firebase_auth_endpoints->email_sign_up;
-	debug_printf("%s() -> endpoint: %s", __FUNCTION__, endpoint);
-	
-	assert(email && password);
-	
-	
 	assert(auth_email && auth_email->auth && auth_email->curl);
 	firebase_auth_context_t * auth = auth_email->auth;
+	const char * api_key = auth->get_api_key(auth);
+	assert(api_key);
 	
 	CURL * curl = auth_email->curl;
 	curl_easy_reset(curl);
 	
 	char url[PATH_MAX] = "";
-	const char * api_key = auth->get_api_key(auth);
-	assert(api_key);
-	
 	int cb = snprintf(url, sizeof(url), "%s?key=%s", endpoint, api_key);
 	assert(cb > 0);
 	
@@ -279,13 +277,6 @@ static firebase_response_t * email_sign_up(struct firebase_auth_email * auth_ema
 	curl_easy_setopt(curl, CURLOPT_WRITEDATA, response);
 	curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 1L);
 	
-	json_object * jrequest = json_object_new_object();
-	assert(jrequest);
-	
-	json_object_object_add(jrequest, "email", json_object_new_string(email));
-	json_object_object_add(jrequest, "password", json_object_new_string(password));
-	json_object_object_add(jrequest, "returnSecureToken", json_object_new_boolean(TRUE));
-
 	const char * post_fields = json_object_to_json_string_ext(jrequest, JSON_C_TO_STRING_PLAIN);
 	assert(post_fields);
 	long post_fields_length = strlen(post_fields);
@@ -309,18 +300,44 @@ static firebase_response_t * email_sign_up(struct firebase_auth_email * auth_ema
 			if(NULL == response->content_type) response->content_type = content_type;
 		}
 	}
-	
 	if(ret != CURLE_OK) {
 		response->err_code = ret;
 		response->err_desc = curl_easy_strerror(ret);
 	}
+	
+	json_object_put(jrequest);	// auto unref jrequest
 	api_key = NULL;
+	
 	return response;
+}
+
+static firebase_response_t * email_sign_up(struct firebase_auth_email * auth_email, const char * email, const char * password)
+{
+	const char * endpoint = g_firebase_auth_endpoints->email_sign_up;
+	debug_printf("%s() -> endpoint: %s", __FUNCTION__, endpoint);
+	assert(email && password);
+	
+	json_object * jrequest = json_object_new_object();
+	assert(jrequest);
+	json_object_object_add(jrequest, "email", json_object_new_string(email));
+	json_object_object_add(jrequest, "password", json_object_new_string(password));
+	json_object_object_add(jrequest, "returnSecureToken", json_object_new_boolean(TRUE));
+	
+	return post_json_request(auth_email, endpoint, jrequest);
 }
 static firebase_response_t * email_sign_in(struct firebase_auth_email * auth_email, const char * email, const char * password)
 {
-	assert(auth_email && auth_email->curl);
-	return NULL;
+	const char * endpoint = g_firebase_auth_endpoints->email_sign_in;
+	debug_printf("%s() -> endpoint: %s", __FUNCTION__, endpoint);
+	
+	assert(email && password);
+	json_object * jrequest = json_object_new_object();
+	assert(jrequest);
+	json_object_object_add(jrequest, "email", json_object_new_string(email));
+	json_object_object_add(jrequest, "password", json_object_new_string(password));
+	json_object_object_add(jrequest, "returnSecureToken", json_object_new_boolean(TRUE));
+	
+	return post_json_request(auth_email, endpoint, jrequest);
 }		  
 static firebase_response_t * email_send_email_verification(struct firebase_auth_email * auth_email, const char * id_token)
 {
@@ -406,6 +423,7 @@ int main(int argc, char **argv)
 	 * 		"api_key": "[Your API_KEY]",
 	 * }
 	**/
+	curl_global_init(CURL_GLOBAL_ALL);
 	const char * credentials_file = "../../private/firebase-credentials.json";
 	if(argc > 1) credentials_file = argv[1];
 	
@@ -428,11 +446,19 @@ int main(int argc, char **argv)
 	const char * test_password = "00000000";
 	const char * rest_reset_password = "11111111";
 	
-	// test email signup
+	// test email sign_up
 	firebase_response_t * result = auth_email->sign_up(auth_email, test_email, test_password);
 	firebase_response_dump(result);
 	firebase_response_free(result);
 	
+	// test email sign_in
+	result = auth_email->sign_in(auth_email, test_email, test_password);
+	firebase_response_dump(result);
+	firebase_response_free(result);
+	
+	
+	firebase_auth_context_cleanup(auth);
+	curl_global_cleanup();
 	return 0;
 }
 #endif
