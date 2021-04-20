@@ -282,11 +282,22 @@ static firebase_response_t * email_sign_up(struct firebase_auth_email * auth_ema
 	json_object * jrequest = json_object_new_object();
 	assert(jrequest);
 	
-	json_object_object_add(jrequest, 
-	
-	
-	
+	json_object_object_add(jrequest, "email", json_object_new_string(email));
+	json_object_object_add(jrequest, "password", json_object_new_string(password));
+	json_object_object_add(jrequest, "returnSecureToken", json_object_new_boolean(TRUE));
+
+	const char * post_fields = json_object_to_json_string_ext(jrequest, JSON_C_TO_STRING_PLAIN);
+	assert(post_fields);
+	long post_fields_length = strlen(post_fields);
+	assert(post_fields_length > 0);
+
+	curl_easy_setopt(curl, CURLOPT_POSTFIELDS, post_fields);
+	curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, post_fields_length);
+
 	ret = curl_easy_perform(curl);
+	json_object_put(jrequest);
+	jrequest = NULL;
+	
 	if(ret == CURLE_OK) {
 		response->http_response_code = 0;
 		ret = curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response->http_response_code);
