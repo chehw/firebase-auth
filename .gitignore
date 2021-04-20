@@ -54,3 +54,10 @@ dkms.conf
 # test files
 tests/*
 !tests/make.sh
+
+# binary files
+bin/*
+lib/*
+obj/*
+
+

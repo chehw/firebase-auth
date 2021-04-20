@@ -45,6 +45,7 @@ extern const firebase_auth_endpoints_t g_firebase_auth_endpoints[];
 
 typedef struct firebase_auth_email
 {
+// private:
 	struct firebase_auth_context * auth;
 	void * user_data;
 	CURL * curl;
@@ -52,6 +53,7 @@ typedef struct firebase_auth_email
 	const char * locale;	// Optional Headers; X-Firebase-Locale:
 	int return_secure_token_flag;	// Whether or not to return an ID and refresh token. Default: 1(true)
 	
+// public: 
 	firebase_response_t * (*sign_up)(struct firebase_auth_email * auth_email, const char * email, const char * password);
 	firebase_response_t * (*sign_in)(struct firebase_auth_email * auth_email, const char * email, const char * password);
 	
@@ -72,12 +74,14 @@ typedef struct firebase_auth_context
 {
 	void * user_data;
 	void * priv;
-	char * locale;
+
 	struct firebase_auth_email auth_email[1];
 	
 	int (* load_credentials)(struct firebase_auth_context * auth, const char * credentials_file);
 	const char * (*get_api_key)(struct firebase_auth_context * auth);
 	firebase_response_t * (* oauth_sign_in)(struct firebase_auth_context * auth, json_object * jrequest);
+	
+	int (* set_locale)(struct firebase_auth_context * auth, const char * locale);
 }firebase_auth_context_t;
 
 firebase_auth_context_t * firebase_auth_context_init(firebase_auth_context_t * auth, void * user_data);
