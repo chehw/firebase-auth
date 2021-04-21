@@ -14,9 +14,7 @@ $ (optional) sudo apt-get install build-essential
 $ sudo apt-get install libjson-c-dev libcurl4-gnutls-dev libpcre3-dev
 ```
 
-{% hint style="info" %}
-libcurl:  use libcurl4-openssl-dev if OpenSSL flavour. 
-{% endhint %}
+\( libcurl:  use libcurl4-openssl-dev if OpenSSL flavour. \)
 
 ## Build
 
