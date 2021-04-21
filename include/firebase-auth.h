@@ -36,10 +36,11 @@ typedef struct firebase_auth_endpoints
 	const char * email_sign_in; 	// https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=[API_KEY]
 	const char * email_send_email_verification;		// https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key=[API_KEY]
 	const char * email_confirm_email_verification; 	// https://identitytoolkit.googleapis.com/v1/accounts:update?key=[API_KEY]
-	const char * change_email; 		// https://identitytoolkit.googleapis.com/v1/accounts:update?key=[API_KEY]
-	const char * change_password; 	// https://identitytoolkit.googleapis.com/v1/accounts:update?key=[API_KEY]
-	const char * send_password_reset; // https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key=[API_KEY]
-	const char * verify_password_reset_code; // https://identitytoolkit.googleapis.com/v1/accounts:resetPassword?key=[API_KEY]
+	const char * email_change_email; 		// https://identitytoolkit.googleapis.com/v1/accounts:update?key=[API_KEY]
+	const char * email_change_password; 	// https://identitytoolkit.googleapis.com/v1/accounts:update?key=[API_KEY]
+	const char * email_send_password_reset_email; // https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key=[API_KEY]
+	const char * email_verify_password_reset_code; // https://identitytoolkit.googleapis.com/v1/accounts:resetPassword?key=[API_KEY]
+	const char * email_confirm_password_reset; // https://identitytoolkit.googleapis.com/v1/accounts:resetPassword?key=[API_KEY]
 }firebase_auth_endpoints_t;
 extern const firebase_auth_endpoints_t g_firebase_auth_endpoints[];
 
@@ -58,7 +59,7 @@ typedef struct firebase_auth_email
 	firebase_response_t * (*sign_in)(struct firebase_auth_email * auth_email, const char * email, const char * password);
 	
 	firebase_response_t * (*send_email_verification)(struct firebase_auth_email * auth_email, const char * id_token);
-	firebase_response_t * (*confirm_email_verification)(struct firebase_auth_email * auth_email, const char * email, const char * password);
+	firebase_response_t * (*confirm_email_verification)(struct firebase_auth_email * auth_email, const char * oob_code);
 	
 	firebase_response_t * (*change_email)(struct firebase_auth_email * auth_email, const char * id_token, const char * new_email);
 	firebase_response_t * (*change_password)(struct firebase_auth_email * auth_email, const char * id_token, const char * new_passwd);

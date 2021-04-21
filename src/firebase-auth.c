@@ -36,6 +36,17 @@
 #include "firebase-auth.h"
 #include "utils.h"
 
+#include "regex.h"
+
+static const char * s_email_pattern = "^\\w+([-+.]\\w+)*@\\w+([-.]\\w+)*\\.\\w+([-.]\\w+)*$";	
+static regex_context_t s_regex_check_email[1];
+static int s_regex_check_email_init_flags = 0;
+static int check_email_format(const char * email, int cb_email) {
+	if(NULL == email || !email[0]) return -1;
+	regex_context_t * regex = s_regex_check_email;
+	return regex->match(regex, email, cb_email);
+}
+
 enum mime_type
 {
 	mime_type_json = 0,
@@ -62,14 +73,16 @@ static const char * content_type_to_supported_ptr(const char * content_type)
 
 const firebase_auth_endpoints_t g_firebase_auth_endpoints[1] = {{
 	.oauth_sign_in = "https://identitytoolkit.googleapis.com/v1/accounts:signInWithIdp",
+	
 	.email_sign_up = "https://identitytoolkit.googleapis.com/v1/accounts:signUp",
 	.email_sign_in = "https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword",
 	.email_send_email_verification = "https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode",
 	.email_confirm_email_verification = "https://identitytoolkit.googleapis.com/v1/accounts:update",
-	.change_email = "https://identitytoolkit.googleapis.com/v1/accounts:update",
-	.change_password = "https://identitytoolkit.googleapis.com/v1/accounts:update",
-	.send_password_reset = "https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode",
-	.verify_password_reset_code = "https://identitytoolkit.googleapis.com/v1/accounts:resetPassword",
+	.email_change_email = "https://identitytoolkit.googleapis.com/v1/accounts:update",
+	.email_change_password = "https://identitytoolkit.googleapis.com/v1/accounts:update",
+	.email_send_password_reset_email = "https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode",
+	.email_verify_password_reset_code = "https://identitytoolkit.googleapis.com/v1/accounts:resetPassword",
+	.email_confirm_password_reset = "https://identitytoolkit.googleapis.com/v1/accounts:resetPassword", 
 }};
 
 /****************************************
@@ -237,6 +250,16 @@ firebase_auth_context_t * firebase_auth_context_init(firebase_auth_context_t * a
 	auth->oauth_sign_in = oauth_sign_in;
 	auth->set_locale = firebase_set_locale;
 	
+	// init check-email regex context
+	if(!s_regex_check_email_init_flags) {
+		int rc = 0;
+		regex_context_t * regex = regex_context_init(s_regex_check_email, auth);
+		assert(regex);
+		rc = regex->set_pattern(regex, s_email_pattern);
+		assert(0 == rc);
+		s_regex_check_email_init_flags = 1;
+	}
+	
 	firebase_auth_private_t * priv = firebase_auth_private_new(auth);
 	assert(priv && auth->priv == priv);
 	
@@ -252,6 +275,9 @@ void firebase_auth_context_cleanup(firebase_auth_context_t * auth)
 	firebase_auth_email_cleanup(auth->auth_email);
 	firebase_auth_private_free(auth->priv);
 	
+	
+	regex_context_cleanup(s_regex_check_email);
+	s_regex_check_email_init_flags = 0;
 	return;
 }
 
@@ -352,7 +378,10 @@ static firebase_response_t * email_sign_up(struct firebase_auth_email * auth_ema
 {
 	const char * endpoint = g_firebase_auth_endpoints->email_sign_up;
 	debug_printf("%s() -> endpoint: %s", __FUNCTION__, endpoint);
-	assert(email && password);
+	
+	assert(auth_email);
+	if(check_email_format(email, -1) <= 0) return NULL;
+	if(NULL == password || !password[0]) return NULL;
 	
 	json_object * jrequest = json_object_new_object();
 	assert(jrequest);
@@ -368,7 +397,10 @@ static firebase_response_t * email_sign_in(struct firebase_auth_email * auth_ema
 	const char * endpoint = g_firebase_auth_endpoints->email_sign_in;
 	debug_printf("%s() -> endpoint: %s", __FUNCTION__, endpoint);
 	
-	assert(email && password);
+	assert(auth_email);
+	if(check_email_format(email, -1) <= 0) return NULL;
+	if(NULL == password || !password[0]) return NULL;
+	
 	json_object * jrequest = json_object_new_object();
 	assert(jrequest);
 	json_object_object_add(jrequest, "email", json_object_new_string(email));
@@ -384,6 +416,7 @@ static firebase_response_t * email_send_email_verification(struct firebase_auth_
 	debug_printf("%s() -> endpoint: %s", __FUNCTION__, endpoint);
 	
 	assert(auth_email && id_token);
+	
 	json_object * jrequest = json_object_new_object();
 	assert(jrequest);
 	json_object_object_add(jrequest, "requestType", json_object_new_string("VERIFY_EMAIL")); // The type of confirmation code to send. Should always be "VERIFY_EMAIL".
@@ -391,35 +424,93 @@ static firebase_response_t * email_send_email_verification(struct firebase_auth_
 	
 	return post_json_request(auth_email, endpoint, jrequest);
 }
-static firebase_response_t * email_confirm_email_verification(struct firebase_auth_email * auth_email, const char * email, const char * password)
+static firebase_response_t * email_confirm_email_verification(struct firebase_auth_email * auth_email, const char * oob_code)
 {
-	assert(auth_email && auth_email->curl);
-	return NULL;
+	const char * endpoint = g_firebase_auth_endpoints->email_confirm_email_verification;
+	debug_printf("%s() -> endpoint: %s", __FUNCTION__, endpoint);
+	
+	assert(auth_email && oob_code);
+	json_object * jrequest = json_object_new_object();
+	assert(jrequest);
+	json_object_object_add(jrequest, "oobCode", json_object_new_string(oob_code)); 
+	
+	return post_json_request(auth_email, endpoint, jrequest);
 }
 static firebase_response_t * email_change_email(struct firebase_auth_email * auth_email, const char * id_token, const char * new_email)
 {
-	assert(auth_email && auth_email->curl);
-	return NULL;
+	const char * endpoint = g_firebase_auth_endpoints->email_change_email;
+	debug_printf("%s() -> endpoint: %s", __FUNCTION__, endpoint);
+	
+	assert(auth_email && id_token);
+	if(check_email_format(new_email, -1) <= 0) return NULL;
+	
+	json_object * jrequest = json_object_new_object();
+	assert(jrequest);
+	json_object_object_add(jrequest, "idToken", json_object_new_string(id_token)); 
+	json_object_object_add(jrequest, "email", json_object_new_string(new_email)); 
+	json_object_object_add(jrequest, "returnSecureToken", json_object_new_boolean(auth_email->return_secure_token_flag));
+	
+	return post_json_request(auth_email, endpoint, jrequest);
 }
 static firebase_response_t * email_change_password(struct firebase_auth_email * auth_email, const char * id_token, const char * new_passwd)
 {
-	assert(auth_email && auth_email->curl);
-	return NULL;
+	const char * endpoint = g_firebase_auth_endpoints->email_change_password;
+	debug_printf("%s() -> endpoint: %s", __FUNCTION__, endpoint);
+	
+	assert(auth_email && id_token);
+	if(NULL == new_passwd || !new_passwd[0]) return NULL;	// password should not be empty
+	
+	json_object * jrequest = json_object_new_object();
+	assert(jrequest);
+	json_object_object_add(jrequest, "idToken", json_object_new_string(id_token)); 
+	json_object_object_add(jrequest, "password", json_object_new_string(new_passwd)); 
+	json_object_object_add(jrequest, "returnSecureToken", json_object_new_boolean(auth_email->return_secure_token_flag));
+	
+	return post_json_request(auth_email, endpoint, jrequest);
 }
+
 static firebase_response_t * email_send_password_reset_email(struct firebase_auth_email * auth_email, const char * email)
 {
-	assert(auth_email && auth_email->curl);
-	return NULL;
+	const char * endpoint = g_firebase_auth_endpoints->email_send_password_reset_email;
+	debug_printf("%s() -> endpoint: %s", __FUNCTION__, endpoint);
+	
+	assert(auth_email);
+	if(check_email_format(email, -1) <= 0) return NULL;
+	
+	json_object * jrequest = json_object_new_object();
+	assert(jrequest);
+	json_object_object_add(jrequest, "requestType", json_object_new_string("PASSWORD_RESET")); // The kind of OOB code to return. Should be "PASSWORD_RESET" for password reset.
+	json_object_object_add(jrequest, "email", json_object_new_string(email)); 
+	
+	return post_json_request(auth_email, endpoint, jrequest);
 }
+
 static firebase_response_t * email_verify_password_reset_code(struct firebase_auth_email * auth_email, const char * oob_code)
 {
-	assert(auth_email && auth_email->curl);
-	return NULL;
+	const char * endpoint = g_firebase_auth_endpoints->email_verify_password_reset_code;
+	debug_printf("%s() -> endpoint: %s", __FUNCTION__, endpoint);
+	
+	assert(auth_email && oob_code);
+	json_object * jrequest = json_object_new_object();
+	assert(jrequest);
+	json_object_object_add(jrequest, "oobCode", json_object_new_string(oob_code)); 
+	
+	return post_json_request(auth_email, endpoint, jrequest);
 }
 static firebase_response_t * email_confirm_password_reset(struct firebase_auth_email * auth_email, const char * oob_code, const char * new_passwd)
 {
-	assert(auth_email && auth_email->curl);
-	return NULL;
+	const char * endpoint = g_firebase_auth_endpoints->email_confirm_password_reset;
+	debug_printf("%s() -> endpoint: %s", __FUNCTION__, endpoint);
+	
+	assert(auth_email && oob_code);
+	if(NULL == new_passwd || !new_passwd[0]) return NULL;
+	
+	json_object * jrequest = json_object_new_object();
+	assert(jrequest);
+	json_object_object_add(jrequest, "oobCode", json_object_new_string(oob_code)); 
+	json_object_object_add(jrequest, "new_passwd", json_object_new_string(new_passwd)); 
+	
+	return post_json_request(auth_email, endpoint, jrequest);
 }
 
 firebase_auth_email_t * firebase_auth_email_init(firebase_auth_email_t * auth_email, struct firebase_auth_context * auth_ctx)
@@ -487,25 +578,36 @@ int main(int argc, char **argv)
 	
 	firebase_auth_email_t * auth_email = auth->auth_email;
 	assert(auth_email);
-	auth_email->locale = "ja_JP.UTF-8";
-	
+	auth_email->return_secure_token_flag = 1;
 	
 	const char * test_email = "chehw.jp@gmail.com";
 	const char * test_change_email = "chehw.tlzs@gmail.com";
 	const char * test_password = "00000000";
 	const char * rest_reset_password = "11111111";
 	
-	// test email sign_up
+	/* 
+	 * TESTs
+	 * - 1. email_sign_up = "https://identitytoolkit.googleapis.com/v1/accounts:signUp",
+	 * - 2. email_sign_in = "https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword",
+	 * - 3. email_send_email_verification = "https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode",
+	 * - 4. email_confirm_email_verification = "https://identitytoolkit.googleapis.com/v1/accounts:update",
+	 * - 5. email_change_email = "https://identitytoolkit.googleapis.com/v1/accounts:update",
+	 * - 6. email_change_password = "https://identitytoolkit.googleapis.com/v1/accounts:update",
+	 * - 7. email_send_password_reset_email = "https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode",
+	 * - 8. email_verify_password_reset_code = "https://identitytoolkit.googleapis.com/v1/accounts:resetPassword",
+	 * - 9. email_confirm_password_reset = "https://identitytoolkit.googleapis.com/v1/accounts:resetPassword", 
+	 */
+	// 1. email_sign_up
 	firebase_response_t * result = auth_email->sign_up(auth_email, test_email, test_password);
 	firebase_response_dump(result);
 	firebase_response_free(result);
 	
-	// test email sign_in
+	// 2. email_sign_in
 	result = auth_email->sign_in(auth_email, test_email, test_password);
 	firebase_response_dump(result);
 	
 	if(result && result->http_response_code == 200) {
-		// test send email verification
+		// 3. email_send_email_verification
 		json_object * jresponse = result->jresponse;
 		assert(jresponse);
 		
@@ -517,6 +619,9 @@ int main(int argc, char **argv)
 			firebase_response_dump(verification);
 			firebase_response_free(verification);
 		}
+		
+	// [Warning]: The plain_text [API_KEY] was send to the user's mailbox by FireBase-Service, 
+	//            Maybe there is a security risk in this way of handling and needs to be confirmed.
 	}
 	
 	firebase_response_free(result);
